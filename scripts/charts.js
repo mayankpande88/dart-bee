@@ -218,7 +218,7 @@ const Charts = (() => {
         // Reverse to show chronological order (oldest first)
         const games = [...recentGames].reverse();
         const labels = games.map((g, i) => `Game ${i + 1}`);
-        const avgPerTurn = games.map(g => g.turns > 0 ? (g.score / g.turns).toFixed(2) : 0);
+        const avgPerTurn = games.map(g => g.avgPerTurn || (g.turns > 0 ? (g.score / g.turns).toFixed(2) : 0));
 
         const options = getDefaultOptions('line');
         options.plugins.legend.display = false;
@@ -275,13 +275,15 @@ const Charts = (() => {
             return null;
         }
 
-        const labels = ['0-59', '60-99', '100-139', '140-179', '180'];
+        const labels = ['0-19', '20-39', '40-59', '60-99', '100-139', '140-179', '180'];
         const data = [
-            scoreData.low || 0,
-            scoreData.medium || 0,
-            scoreData.good || 0,
-            scoreData.high || 0,
-            scoreData.perfect || 0
+            scoreData.range0_19 || 0,
+            scoreData.range20_39 || 0,
+            scoreData.range40_59 || 0,
+            scoreData.range60_99 || 0,
+            scoreData.range100_139 || 0,
+            scoreData.range140_179 || 0,
+            scoreData.range180 || 0
         ];
 
         const options = getDefaultOptions('bar');
@@ -307,13 +309,7 @@ const Charts = (() => {
                 datasets: [{
                     label: 'Turns',
                     data: data,
-                    backgroundColor: [
-                        c.textLight,
-                        c.accentBlue,
-                        c.accentYellow,
-                        c.primary,
-                        c.accentGreen
-                    ],
+                    backgroundColor: c.primary,
                     borderRadius: 6,
                     borderSkipped: false
                 }]

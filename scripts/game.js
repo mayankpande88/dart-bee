@@ -416,6 +416,7 @@ const Game = (() => {
             // Assign ranks
             sortedPlayers.forEach((player, index) => {
                 player.finish_rank = index + 1;
+                player.winner = (index === 0); // First place is winner
             });
             console.log('Sorted players (by score/finished):');
             sortedPlayers.forEach((p, i) => {

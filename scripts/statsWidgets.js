@@ -309,59 +309,225 @@ const StatsWidgets = (() => {
     }
 
     /**
-     * Render activity heatmap calendar
+     * Compute summary stats from heatmap activity data
+     */
+    function computeHeatmapSummary(activityData) {
+        const values = Object.values(activityData);
+        const totalGames = values.reduce((sum, v) => sum + v, 0);
+
+        // Most active day of week
+        const dayTotals = [0, 0, 0, 0, 0, 0, 0]; // Sun-Sat
+        Object.entries(activityData).forEach(([dateStr, count]) => {
+            const dow = new Date(dateStr + 'T12:00:00').getDay();
+            dayTotals[dow] += count;
+        });
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const maxDayIdx = dayTotals.indexOf(Math.max(...dayTotals));
+        const mostActiveDay = dayTotals[maxDayIdx] > 0 ? dayNames[maxDayIdx] : '—';
+
+        // Current playing streak (consecutive days with games, ending today or yesterday)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        let streak = 0;
+        let checkDate = new Date(today);
+        // Allow streak to start from yesterday if no games today
+        const todayStr = checkDate.toISOString().split('T')[0];
+        if (!activityData[todayStr] || activityData[todayStr] === 0) {
+            checkDate.setDate(checkDate.getDate() - 1);
+        }
+        while (true) {
+            const key = checkDate.toISOString().split('T')[0];
+            if (activityData[key] && activityData[key] > 0) {
+                streak++;
+                checkDate.setDate(checkDate.getDate() - 1);
+            } else {
+                break;
+            }
+        }
+
+        // Avg games per week
+        const numWeeks = Math.max(Math.ceil(Object.keys(activityData).length / 7), 1);
+        const avgPerWeek = (totalGames / numWeeks).toFixed(1);
+
+        return { totalGames, mostActiveDay, streak, avgPerWeek };
+    }
+
+    /**
+     * Render activity heatmap calendar (GitHub-style with summary, month labels, gold theme)
      */
     function renderActivityHeatmap(activityData, weeks = 12) {
-        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const dayLabels = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
         const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
         // Calculate max for color scaling
         const maxGames = Math.max(...Object.values(activityData), 1);
 
-        let html = `
-            <div class="heatmap-container">
-                <div class="heatmap-labels">
-                    ${days.map(d => `<span class="heatmap-day-label">${d[0]}</span>`).join('')}
-                </div>
-                <div class="heatmap-grid">
-        `;
+        // Compute summary stats
+        const summary = computeHeatmapSummary(activityData);
 
-        // Generate cells for each day
+        // Build week columns and track month boundaries for labels
+        const weekColumns = [];
         for (let w = weeks - 1; w >= 0; w--) {
-            html += '<div class="heatmap-week">';
+            const weekDays = [];
             for (let d = 0; d < 7; d++) {
                 const date = new Date(today);
                 date.setDate(date.getDate() - (w * 7 + (6 - d)));
-                const dateStr = date.toISOString().split('T')[0];
-                const count = activityData[dateStr] || 0;
-                const intensity = count > 0 ? Math.min(Math.ceil((count / maxGames) * 4), 4) : 0;
-
-                html += `
-                    <div class="heatmap-cell intensity-${intensity}"
-                         title="${dateStr}: ${count} game${count !== 1 ? 's' : ''}"
-                         data-date="${dateStr}"
-                         data-count="${count}">
-                    </div>
-                `;
+                weekDays.push(date);
             }
-            html += '</div>';
+            weekColumns.push(weekDays);
         }
 
-        html += `
+        // Month labels: find first week that starts each month
+        const monthLabels = [];
+        let lastMonth = -1;
+        const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        weekColumns.forEach((weekDays, idx) => {
+            const firstDay = weekDays[0]; // Sunday of this week
+            const m = firstDay.getMonth();
+            if (m !== lastMonth) {
+                monthLabels.push({ idx, label: shortMonths[m] });
+                lastMonth = m;
+            }
+        });
+
+        // Summary stats row
+        let html = `
+            <div class="heatmap-container">
+                <div class="heatmap-summary">
+                    <div class="heatmap-stat-card">
+                        <span class="heatmap-stat-value">${summary.totalGames}</span>
+                        <span class="heatmap-stat-label">Games Played</span>
+                    </div>
+                    <div class="heatmap-stat-card">
+                        <span class="heatmap-stat-value">${summary.mostActiveDay}</span>
+                        <span class="heatmap-stat-label">Most Active Day</span>
+                    </div>
+                    <div class="heatmap-stat-card">
+                        <span class="heatmap-stat-value">${summary.streak} <span class="heatmap-stat-unit">d</span></span>
+                        <span class="heatmap-stat-label">Current Streak</span>
+                    </div>
+                    <div class="heatmap-stat-card">
+                        <span class="heatmap-stat-value">${summary.avgPerWeek}</span>
+                        <span class="heatmap-stat-label">Avg / Week</span>
+                    </div>
                 </div>
-                <div class="heatmap-legend">
-                    <span>Less</span>
-                    <div class="heatmap-cell intensity-0"></div>
-                    <div class="heatmap-cell intensity-1"></div>
-                    <div class="heatmap-cell intensity-2"></div>
-                    <div class="heatmap-cell intensity-3"></div>
-                    <div class="heatmap-cell intensity-4"></div>
-                    <span>More</span>
+        `;
+
+        // Month labels row
+        html += '<div class="heatmap-month-row">';
+        html += '<div class="heatmap-label-spacer"></div>'; // space for day labels column
+        let labelIdx = 0;
+        for (let w = 0; w < weeks; w++) {
+            if (labelIdx < monthLabels.length && monthLabels[labelIdx].idx === w) {
+                // Calculate span: number of weeks until next label
+                const nextIdx = labelIdx + 1 < monthLabels.length ? monthLabels[labelIdx + 1].idx : weeks;
+                const span = nextIdx - w;
+                html += `<span class="heatmap-month-label" style="width: ${span * 15}px;">${monthLabels[labelIdx].label}</span>`;
+                w += span - 1; // skip ahead
+                labelIdx++;
+            }
+        }
+        html += '</div>';
+
+        // Heatmap grid with day labels
+        html += `
+                <div class="heatmap-body">
+                    <div class="heatmap-labels">
+                        ${dayLabels.map(d => `<span class="heatmap-day-label">${d}</span>`).join('')}
+                    </div>
+                    <div class="heatmap-grid">
+        `;
+
+        // Format date for tooltip: "Mon, Feb 3"
+        function formatTooltipDate(date) {
+            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            return `${days[date.getDay()]}, ${months[date.getMonth()]} ${date.getDate()}`;
+        }
+
+        // Generate cells
+        weekColumns.forEach(weekDays => {
+            html += '<div class="heatmap-week">';
+            weekDays.forEach(date => {
+                const dateStr = date.toISOString().split('T')[0];
+                const isFuture = date > today;
+                const count = activityData[dateStr] || 0;
+                const intensity = count > 0 ? Math.min(Math.ceil((count / maxGames) * 4), 4) : 0;
+                const tooltip = formatTooltipDate(date) + ': ' + count + ' game' + (count !== 1 ? 's' : '');
+
+                if (isFuture) {
+                    html += `<div class="heatmap-cell heatmap-future"></div>`;
+                } else {
+                    html += `
+                        <div class="heatmap-cell intensity-${intensity}"
+                             title="${tooltip}"
+                             data-date="${dateStr}"
+                             data-count="${count}">
+                        </div>
+                    `;
+                }
+            });
+            html += '</div>';
+        });
+
+        html += `
+                    </div>
+                </div>
+                <div class="heatmap-footer">
+                    <div class="heatmap-detail" id="heatmap-detail"></div>
+                    <div class="heatmap-legend">
+                        <span>Less</span>
+                        <div class="heatmap-cell intensity-0"></div>
+                        <div class="heatmap-cell intensity-1"></div>
+                        <div class="heatmap-cell intensity-2"></div>
+                        <div class="heatmap-cell intensity-3"></div>
+                        <div class="heatmap-cell intensity-4"></div>
+                        <span>More</span>
+                    </div>
                 </div>
             </div>
         `;
 
         return html;
+    }
+
+    /**
+     * Initialize heatmap cell click interactions
+     */
+    function initHeatmapInteractions() {
+        const container = document.querySelector('.heatmap-grid');
+        if (!container) return;
+
+        container.addEventListener('click', (e) => {
+            const cell = e.target.closest('.heatmap-cell');
+            if (!cell || cell.classList.contains('heatmap-future')) return;
+
+            const dateStr = cell.dataset.date;
+            const count = parseInt(cell.dataset.count, 10) || 0;
+            const detail = document.getElementById('heatmap-detail');
+
+            // Remove previous selection
+            container.querySelectorAll('.heatmap-cell.selected').forEach(c => c.classList.remove('selected'));
+
+            if (count > 0) {
+                cell.classList.add('selected');
+                // Format date nicely
+                const d = new Date(dateStr + 'T12:00:00');
+                const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                const formatted = `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+                if (detail) {
+                    detail.innerHTML = `<span class="heatmap-detail-date">${formatted}</span> — <strong>${count}</strong> game${count !== 1 ? 's' : ''} played`;
+                    detail.classList.add('visible');
+                }
+            } else {
+                if (detail) {
+                    detail.classList.remove('visible');
+                    detail.innerHTML = '';
+                }
+            }
+        });
     }
 
     /**
@@ -725,7 +891,9 @@ const StatsWidgets = (() => {
         renderProgressRing,
         renderProgressRings,
         getActivityData,
+        computeHeatmapSummary,
         renderActivityHeatmap,
+        initHeatmapInteractions,
         calculateStreaks,
         renderStreaks,
         renderSettingsPanel,

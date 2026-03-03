@@ -321,6 +321,7 @@ const UI = (() => {
             // Get interrupted games (active, not completed)
             const { games: interruptedGames } = await Storage.getGamesPaginated(1, 10, {
                 completed: false,
+                active: true, // MUST be active
                 includePractice: false // Don't show practice in interrupted by default
             });
 
@@ -1042,19 +1043,30 @@ const UI = (() => {
         includePractice: false
     };
 
+    // Pagination state for player profile games list
+    let profilePaginationState = {
+        currentPage: 1,
+        totalPages: 1,
+        gamesPerPage: 10,
+        playerName: '',
+        totalGames: 0
+    };
+
     /**
      * Render game history list with pagination
      * OPTIMIZED: Uses database-level pagination instead of client-side
      */
-    async function renderGameHistory(filter = '', sortOrder = 'newest', page = 1, includePractice = false) {
+    async function renderGameHistory(filter = '', sortOrder = 'newest', page = 1, includePractice = false, showIncomplete = false) {
         const container = document.getElementById('games-history-list');
+        console.log('Filtering history:', { filter, includePractice, showIncomplete });
 
         // OPTIMIZED: Database-level pagination and filtering
         const { games: paginatedGames, pagination } = await Storage.getGamesPaginated(
             page,
             paginationState.gamesPerPage,
             {
-                completed: true,
+                completed: showIncomplete ? undefined : true,
+                showIncomplete: showIncomplete,
                 playerName: filter || undefined,
                 sortOrder: sortOrder,
                 includePractice: includePractice
@@ -1065,6 +1077,7 @@ const UI = (() => {
         paginationState.filter = filter;
         paginationState.sortOrder = sortOrder;
         paginationState.includePractice = includePractice;
+        paginationState.showIncomplete = showIncomplete;
         paginationState.currentPage = pagination.page;
         paginationState.totalPages = pagination.totalPages;
         paginationState.totalGames = pagination.total;
@@ -1168,10 +1181,132 @@ const UI = (() => {
             btn.textContent = i;
             btn.onclick = (e) => {
                 e.preventDefault();
-                renderGameHistory(paginationState.filter, paginationState.sortOrder, i, paginationState.includePractice);
+                renderGameHistory(paginationState.filter, paginationState.sortOrder, i, paginationState.includePractice, paginationState.showIncomplete);
             };
             paginationNumbers.appendChild(btn);
         }
+    }
+
+    /**
+     * Render paginated game history for a specific player profile
+     */
+    async function renderPlayerGameHistory(playerName, page = 1) {
+        const container = document.getElementById('profile-games-list');
+        if (!container) return;
+
+        profilePaginationState.playerName = playerName;
+        profilePaginationState.currentPage = page;
+
+        try {
+            const { games, pagination } = await Storage.getGamesPaginated(
+                page,
+                profilePaginationState.gamesPerPage,
+                {
+                    playerName: playerName,
+                    completed: undefined,
+                    showIncomplete: null, // Show both complete and incomplete
+                    includePractice: null  // Show both practice and regular
+                }
+            );
+
+            profilePaginationState.totalPages = pagination.totalPages;
+            profilePaginationState.totalGames = pagination.total;
+
+            document.getElementById('profile-history-count').textContent = `Total: ${pagination.total} games`;
+
+            if (games.length === 0) {
+                container.innerHTML = '<p class="placeholder">No games found for this player.</p>';
+                document.getElementById('profile-pagination-controls').style.display = 'none';
+                return;
+            }
+
+            container.innerHTML = games.map(game => {
+                const winner = game.players.find(p => p.winner);
+                const date = new Date(game.created_at).toLocaleDateString();
+                const playerInGame = game.players.find(p => p.name === playerName);
+                const isWinner = playerInGame?.winner;
+
+                return `
+                    <div class="game-card history-card ${isWinner ? 'winner-light' : ''}" onclick="Router.navigate('game-detail', {gameId: '${game.id}'})">
+                        <div class="game-card-header">
+                            <div class="game-card-title">${game.game_type} Points</div>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <div class="game-card-date">${date}</div>
+                                ${game.is_practice ? '<span class="practice-badge">Practice</span>' : ''}
+                                ${!game.completed_at ? '<span class="status-badge progress">In Progress</span>' : ''}
+                            </div>
+                        </div>
+                        <div class="game-card-body">
+                            <div class="history-card-players">
+                                ${game.players.map(p => `
+                                    <div class="player-pill ${p.name === playerName ? 'current' : ''} ${p.winner ? 'winner' : ''}">
+                                        ${p.winner ? '🏆 ' : ''}${p.name}
+                                    </div>
+                                `).join('<span class="vs">vs</span>')}
+                            </div>
+                            <div class="game-card-result">
+                                ${isWinner ? '<span class="result-win">WIN</span>' : (game.completed_at ? '<span class="result-loss">LOSS</span>' : '<span class="result-ongoing">PLAYING</span>')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            updateProfilePaginationUI();
+        } catch (error) {
+            console.error('Error loading player history:', error);
+            container.innerHTML = '<p class="placeholder">Error loading games.</p>';
+        }
+    }
+
+    /**
+     * Update pagination controls for player profile history
+     */
+    function updateProfilePaginationUI() {
+        const { currentPage, totalPages } = profilePaginationState;
+        const controls = document.getElementById('profile-pagination-controls');
+        const numbers = document.getElementById('profile-pagination-numbers');
+        const prev = document.getElementById('profile-pagination-prev');
+        const next = document.getElementById('profile-pagination-next');
+
+        if (!controls || totalPages <= 1) {
+            if (controls) controls.style.display = 'none';
+            return;
+        }
+
+        controls.style.display = 'flex';
+        prev.disabled = currentPage === 1;
+        next.disabled = currentPage === totalPages;
+
+        numbers.innerHTML = '';
+        const maxVisible = 5;
+        let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+
+        if (endPage - startPage < maxVisible - 1) {
+            startPage = Math.max(1, endPage - maxVisible + 1);
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            const btn = document.createElement('button');
+            btn.className = `btn btn-secondary btn-small pagination-number ${i === currentPage ? 'active' : ''}`;
+            btn.textContent = i;
+            btn.onclick = (e) => {
+                e.preventDefault();
+                renderPlayerGameHistory(profilePaginationState.playerName, i);
+            };
+            numbers.appendChild(btn);
+        }
+
+        prev.onclick = (e) => {
+            e.preventDefault();
+            if (currentPage > 1) renderPlayerGameHistory(profilePaginationState.playerName, currentPage - 1);
+        };
+
+        next.onclick = (e) => {
+            e.preventDefault();
+            if (currentPage < totalPages) renderPlayerGameHistory(profilePaginationState.playerName, currentPage + 1);
+        };
     }
 
     /**
@@ -1596,6 +1731,26 @@ const UI = (() => {
             `;
         }
 
+        // Full Game History Section (AT THE VERY BOTTOM)
+        html += `
+            <div class="profile-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-lg);">
+                    <h3>Game History</h3>
+                    <p id="profile-history-count" style="font-size: 0.85rem; color: var(--color-text-light);"></p>
+                </div>
+                <div id="profile-games-list" class="games-list">
+                    <div class="loading-charts"><p>Loading games...</p></div>
+                </div>
+                
+                <!-- Pagination -->
+                <div id="profile-pagination-controls" class="pagination-controls mt-xl" style="display: none;">
+                    <button class="btn btn-secondary btn-small" id="profile-pagination-prev">&larr; Prev</button>
+                    <div id="profile-pagination-numbers" class="pagination-numbers"></div>
+                    <button class="btn btn-secondary btn-small" id="profile-pagination-next">Next &rarr;</button>
+                </div>
+            </div>
+        `;
+
         document.getElementById('profile-player-name').textContent = `${playerName}'s Profile`;
         content.innerHTML = html;
 
@@ -1621,6 +1776,9 @@ const UI = (() => {
             if (Object.keys(stats.headToHead).length > 0) {
                 Charts.createHeadToHeadChart('headToHeadChart', stats.headToHead);
             }
+
+            // Render paginated game history for this player
+            renderPlayerGameHistory(playerName, 1);
 
             // Initialize any new icons
             if (window.lucide) {
@@ -2214,12 +2372,13 @@ const UI = (() => {
 
         container.innerHTML = html;
 
-        // Render charts
+        // Render charts and init interactions
         setTimeout(() => {
             Charts.createWinLossChart('playerWinLossChart', stats.gamesWon, stats.gamesPlayed - stats.gamesWon);
             Charts.createStatsRadarChart('playerRadarChart', stats);
             Charts.createPerformanceChart('playerPerformanceChart', recentPerformance);
             Charts.createScoreDistributionChart('playerScoreDistChart', scoreDistribution);
+            StatsWidgets.initHeatmapInteractions();
         }, 50);
     }
 
@@ -2590,6 +2749,13 @@ const UI = (() => {
                         <span>${tournament.participants?.length || 0}/${tournament.max_players} Players</span>
                     </div>
                 </div>
+                ${tournament.status === 'in_progress' && tournament.matches.every(m => m.status === 'completed') ? `
+                    <div class="tournament-actions">
+                        <button class="btn btn-accent btn-small" onclick="App.finalizeTournament('${tournament.id}')">
+                            Complete Tournament
+                        </button>
+                    </div>
+                ` : ''}
                 ${tournament.status === 'completed' ? `
                     <div class="tournament-winner-celebration">
                         <div class="confetti-container">
@@ -3524,3 +3690,6 @@ const UI = (() => {
         setupTournamentRegistrationUI
     };
 })();
+
+// Ensure it's globally available immediately
+window.UI = UI;

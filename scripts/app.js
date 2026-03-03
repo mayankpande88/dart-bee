@@ -591,22 +591,29 @@ const App = (() => {
         const playerFilter = document.getElementById('history-player-filter');
         const sortSelect = document.getElementById('history-sort');
         const showPracticeCheck = document.getElementById('history-show-practice');
+        const showIncompleteCheck = document.getElementById('history-show-incomplete');
 
         if (playerFilter) {
-            playerFilter.addEventListener('input', async (e) => {
-                await UI.renderGameHistory(e.target.value, sortSelect.value, 1, showPracticeCheck?.checked);
+            playerFilter.addEventListener('change', async (e) => {
+                await UI.renderGameHistory(e.target.value, sortSelect.value, 1, showPracticeCheck?.checked, showIncompleteCheck?.checked);
             });
         }
 
         if (sortSelect) {
             sortSelect.addEventListener('change', async (e) => {
-                await UI.renderGameHistory(playerFilter?.value || '', e.target.value, 1, showPracticeCheck?.checked);
+                await UI.renderGameHistory(playerFilter?.value || '', e.target.value, 1, showPracticeCheck?.checked, showIncompleteCheck?.checked);
             });
         }
 
         if (showPracticeCheck) {
             showPracticeCheck.addEventListener('change', async (e) => {
-                await UI.renderGameHistory(playerFilter?.value || '', sortSelect.value, 1, e.target.checked);
+                await UI.renderGameHistory(playerFilter?.value || '', sortSelect.value, 1, e.target.checked, showIncompleteCheck?.checked);
+            });
+        }
+
+        if (showIncompleteCheck) {
+            showIncompleteCheck.addEventListener('change', async (e) => {
+                await UI.renderGameHistory(playerFilter?.value || '', sortSelect.value, 1, showPracticeCheck?.checked, e.target.checked);
             });
         }
 
@@ -622,7 +629,8 @@ const App = (() => {
                     state.filter,
                     state.sortOrder,
                     state.currentPage - 1,
-                    state.includePractice
+                    state.includePractice,
+                    state.showIncomplete
                 );
             });
         }
@@ -635,7 +643,8 @@ const App = (() => {
                     state.filter,
                     state.sortOrder,
                     state.currentPage + 1,
-                    state.includePractice
+                    state.includePractice,
+                    state.showIncomplete
                 );
             });
         }
@@ -650,23 +659,6 @@ const App = (() => {
      * Setup leaderboard events
      */
     function setupLeaderboardEvents() {
-        const searchInput = document.getElementById('leaderboard-search');
-        let searchTimeout = null;
-
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                const query = e.target.value;
-                const metric = document.querySelector('.leaderboard-tabs .tab-btn.active')?.dataset.tab || 'avg-turn';
-                const filter = document.querySelector('.time-filters .filter-btn.active')?.dataset.filter || 'all-time';
-
-                // Debounce search
-                clearTimeout(searchTimeout);
-                searchTimeout = setTimeout(() => {
-                    UI.renderLeaderboard(metric, filter, query);
-                }, 300);
-            });
-        }
-
         // Time filters - navigate to update URL
         document.querySelectorAll('.time-filters .filter-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -701,12 +693,22 @@ const App = (() => {
      * Setup modal events
      */
     function setupModalEvents() {
-        document.getElementById('modal-close')?.addEventListener('click', UI.hideModal);
-        document.getElementById('modal')?.addEventListener('click', (e) => {
-            if (e.target.id === 'modal') {
-                UI.hideModal();
-            }
-        });
+        const modalClose = document.getElementById('modal-close');
+        const modal = document.getElementById('modal');
+        
+        if (modalClose) {
+            modalClose.addEventListener('click', () => {
+                if (typeof UI !== 'undefined') UI.hideModal();
+            });
+        }
+        
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target.id === 'modal' && typeof UI !== 'undefined') {
+                    UI.hideModal();
+                }
+            });
+        }
     }
 
     /**
@@ -905,10 +907,42 @@ const App = (() => {
      */
     async function loadHistory() {
         const gameDetailPage = document.getElementById('game-detail-page');
-        gameDetailPage.classList.add('hidden');
+        if (gameDetailPage) gameDetailPage.classList.add('hidden');
         document.getElementById('history-page').classList.remove('hidden');
         UI.showPage('history-page');
-        await UI.renderGameHistory();
+        
+        await populateHistoryPlayerFilter();
+        
+        const playerFilter = document.getElementById('history-player-filter');
+        const sortSelect = document.getElementById('history-sort');
+        const showPracticeCheck = document.getElementById('history-show-practice');
+        const showIncompleteCheck = document.getElementById('history-show-incomplete');
+        
+                await UI.renderGameHistory(
+                    playerFilter?.value || '', 
+                    sortSelect?.value || 'newest', 
+                    1, 
+                    showPracticeCheck?.checked || false,
+                    showIncompleteCheck?.checked ? true : false
+                );
+    }
+
+    /**
+     * Populate the player filter dropdown in history page
+     */
+    async function populateHistoryPlayerFilter() {
+        const filter = document.getElementById('history-player-filter');
+        if (!filter) return;
+
+        const players = await Stats.getAllPlayerNames();
+        const currentValue = filter.value;
+        
+        let html = '<option value="">All Players</option>';
+        players.forEach(name => {
+            html += `<option value="${name}" ${name === currentValue ? 'selected' : ''}>${name}</option>`;
+        });
+        
+        filter.innerHTML = html;
     }
 
     /**
@@ -916,7 +950,7 @@ const App = (() => {
      */
     async function loadLeaderboard(metric = 'avg-turn', filter = 'all-time') {
         const profilePage = document.getElementById('player-profile-page');
-        profilePage.classList.add('hidden');
+        if (profilePage) profilePage.classList.add('hidden');
         document.getElementById('leaderboard-page').classList.remove('hidden');
         UI.showPage('leaderboard-page');
 
@@ -2664,6 +2698,38 @@ const App = (() => {
         document.getElementById('cancel-delete-btn').addEventListener('click', () => UI.hideModal());
     }
 
+    /**
+     * Manually finalize a tournament if all matches are done
+     */
+    async function finalizeTournament(tournamentId) {
+        const tournament = await Storage.getTournament(tournamentId);
+        if (!tournament) return;
+
+        UI.showLoader('Finalizing tournament...');
+        try {
+            // Check completion logic
+            Tournament.checkTournamentComplete(tournament);
+
+            if (tournament.status === 'completed') {
+                // Update in storage
+                await Storage.updateTournament(tournament.id, {
+                    status: 'completed',
+                    winner_name: tournament.winner_name
+                });
+
+                UI.showToast(`Tournament completed! Winner: ${tournament.winner_name}`, 'success');
+                await loadTournament(tournament.id);
+            } else {
+                UI.showToast('Tournament could not be completed automatically. Ensure all matches have winners.', 'warning');
+            }
+        } catch (error) {
+            console.error('Error finalizing tournament:', error);
+            UI.showToast('Failed to finalize tournament', 'error');
+        } finally {
+            UI.hideLoader();
+        }
+    }
+
     function confirmDeleteLeague(id, name) {
         const content = document.createElement('div');
         content.innerHTML = `
@@ -2720,7 +2786,8 @@ const App = (() => {
         // Delete actions (called from inline onclick)
         confirmDeleteGame,
         confirmDeleteTournament,
-        confirmDeleteLeague
+        confirmDeleteLeague,
+        finalizeTournament
     };
 })();
 
@@ -2754,7 +2821,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('Storage ready, initializing app...');
     } catch (error) {
         console.error('Failed to initialize Storage:', error);
-        UI.showToast('Failed to connect to database. Please refresh the page.', 'error');
+        if (typeof UI !== 'undefined') {
+            UI.showToast('Failed to connect to database. Please refresh the page.', 'error');
+        }
+        return;
+    }
+
+    // Ensure UI is defined before initializing app
+    if (typeof UI === 'undefined') {
+        console.error('UI module not loaded! App initialization failed.');
         return;
     }
 

@@ -33,9 +33,15 @@ async function fetchAll(client, table) {
     return rows;
 }
 
-// Generated/computed columns that can't be inserted
+// Generated/computed and aggregate columns that were removed in V023
 const EXCLUDE_COLUMNS = {
-    players: ['win_rate', 'avg_per_dart', 'avg_per_turn', 'checkout_percentage'],
+    players: [
+        'total_games_played', 'total_games_won', 'total_darts_thrown', 
+        'total_score', 'total_180s', 'total_140_plus', 'max_dart_score', 
+        'max_turn_score', 'total_checkout_attempts', 'total_checkout_successes', 
+        'best_checkout', 'win_rate', 'avg_per_dart', 'checkout_percentage', 
+        'total_turns', 'avg_per_turn'
+    ],
     game_players: ['avg_per_turn'],
 };
 
